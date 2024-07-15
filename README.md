@@ -48,7 +48,7 @@ This repository contains code for point cloud processing using Open3D, CuPy, and
 
 1. Install `Open3D`, `CuPy`, `NumPy`, and `PyTorch`:
     ```bash
-    pip3 install open3d==0.18.0 cupy-cuda110==12.3.0 numpy==1.25.2 torch==1.7.1
+    pip3 install open3d==0.18.0 cupy-cuda110 numpy==1.25.2 torch==1.7.1
     ```
 
 ### Step 4: Verify Installation
