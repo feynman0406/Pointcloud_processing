@@ -125,6 +125,9 @@ def map_colors_to_mesh(pcd, mesh, device="cuda:0", k=1):
 
 # GPU-based k-NN search function
 def knn_search_gpu(dataset_points, query_points, k):
+    """
+    Perform k-NN search on GPU.
+    """
     print(f"Running on GPU")
 
     # Create NearestNeighborSearch object and build index
@@ -151,6 +154,9 @@ def knn_search_gpu(dataset_points, query_points, k):
 
 #save_points_to_las
 def save_points_to_las(extracted_points, filename="extracted_points_near_edges.las"):
+    """
+    Save points to a LAS file.
+    """
     try:
         # Calculate offsets and scales
         min_vals = np.min(extracted_points, axis=0)
@@ -181,7 +187,11 @@ def save_points_to_las(extracted_points, filename="extracted_points_near_edges.l
 
 # GPU voxelization
 # Function to perform batched voxel downsampling on the GPU
+
 def voxel_down_sample_gpu_batched(pcd, voxel_size, batch_size):
+    """
+    Perform batched voxel downsampling on the GPU.
+    """
     num_points = pcd.point.positions.shape[0]
     num_batches = (num_points + batch_size - 1) // batch_size
 
@@ -256,3 +266,28 @@ def voxel_down_sample_gpu_batched(pcd, voxel_size, batch_size):
 
 #Example of uasage
 #pcd_gpu_downsampled = voxel_down_sample_gpu_batched(pcd_gpu, voxel_size=0.01, batch_size=400000)
+
+
+def compute_curvature_based_edges(pcd, radius):
+    """
+    Compute curvature-based edge scores for a point cloud.
+    """
+    edge_scores = np.zeros(len(pcd.points))
+    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+    for i in range(len(pcd.points)):
+        [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[i], radius)
+        if len(idx) > 3:
+            neighbors = np.asarray(pcd.points)[idx[1:], :]
+            try:
+                cov = np.cov(neighbors - np.mean(neighbors, axis=0), rowvar=False)
+                eigvals, eigvecs = np.linalg.eigh(cov)
+                edge_scores[i] = eigvals[0] / np.sum(eigvals)
+            except np.linalg.LinAlgError as e:
+                print(f"LinAlgError at point {i}: {e}")
+                edge_scores[i] = 0
+            except Exception as e:
+                print(f"Error at point {i}: {e}")
+                edge_scores[i] = 0
+        else:
+            edge_scores[i] = 0
+    return edge_scores`
