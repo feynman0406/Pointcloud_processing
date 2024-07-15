@@ -290,4 +290,105 @@ def compute_curvature_based_edges(pcd, radius):
                 edge_scores[i] = 0
         else:
             edge_scores[i] = 0
-    return edge_scores`
+    return edge_scores
+
+
+
+#Process point cloud
+def process_point_cloud(input_file, output_file, initial_voxel_size, normal_radius, normal_max_nn, downsample_batch_size,
+                        inside_downsample_voxel_size, edge_threshold_percentile, 
+                        ball_pivoting_radii, edge_filename=None, inside_filename=None, 
+                        combined_filename=None):
+    start_time = time.time()
+    device = "cuda:0"
+
+    # Load LAS file and convert to GPU tensor
+    pcd = las_to_pcd_gpu(input_file, gpu=True)
+
+    # Downsample the point cloud
+    start_gpu = time.time()
+    pcd_gpu_downsampled = voxel_down_sample_gpu_batched(pcd, voxel_size=initial_voxel_size, batch_size=downsample_batch_size)
+    gpu_time = time.time() - start_gpu
+    print(f"GPU Voxel Downsampling Time: {gpu_time:.6f} seconds")
+
+    pcd_cpu_downsampled = pcd_gpu_downsampled.cpu()
+    pcd_downsampled = pcd_cpu_downsampled.to_legacy()
+    
+    o3d.io.write_point_cloud("downsampled_point_cloud.pcd", pcd_downsampled)
+
+    # Compute edge scores
+    t_feature = time.time()
+    edge_scores = compute_curvature_based_edges(pcd_downsampled, radius=initial_voxel_size * 3)
+    print("Feature extraction time: ", time.time()-t_feature)
+
+    if len(edge_scores) == 0 or np.all(edge_scores == 0):
+        print("No valid edge scores were computed. Please check the parameters and point cloud data.")
+        return None
+
+    # Threshold the edge scores
+    threshold = np.percentile(edge_scores, edge_threshold_percentile)
+    edge_indices = np.where(edge_scores > threshold)[0]
+    inside_indices = np.where(edge_scores <= threshold)[0]
+
+    edge_points = np.asarray(pcd_downsampled.points)[edge_indices]
+    inside_points = np.asarray(pcd_downsampled.points)[inside_indices]
+
+    has_colors = pcd_downsampled.has_colors()
+    if has_colors:
+        edge_colors = np.asarray(pcd_downsampled.colors)[edge_indices]
+        inside_colors = np.asarray(pcd_downsampled.colors)[inside_indices]
+
+    # Create point clouds for edge and inside points
+    edge_pcd = o3d.geometry.PointCloud()
+    edge_pcd.points = o3d.utility.Vector3dVector(edge_points)
+    if has_colors:
+        edge_pcd.colors = o3d.utility.Vector3dVector(edge_colors)
+
+    inside_pcd = o3d.t.geometry.PointCloud(o3c.Tensor(inside_points, dtype=o3c.Dtype.Float32, device=o3c.Device("CUDA:0")))
+    if has_colors:
+        inside_pcd.point.colors = o3c.Tensor(inside_colors, dtype=o3c.Dtype.Float32, device=o3c.Device("CUDA:0"))
+
+    # Downsample inside points
+    inside_downsample_pcd = voxel_down_sample_gpu_batched(inside_pcd, voxel_size=inside_downsample_voxel_size, batch_size=downsample_batch_size)
+    inside_downsample_pcd = inside_downsample_pcd.cpu().to_legacy()
+
+    # Combine edge and downsampled inside points
+    combined_points = np.vstack((edge_points, np.asarray(inside_downsample_pcd.points)))
+    combined_pcd = o3d.geometry.PointCloud()
+    combined_pcd.points = o3d.utility.Vector3dVector(combined_points)
+    
+    # Save point clouds to LAS files if filenames are provided
+    t0 = time.time()
+    if edge_filename:
+        save_points_to_las(edge_points, edge_filename)
+    if inside_filename:
+        save_points_to_las(np.asarray(inside_downsample_pcd.points), inside_filename)
+    if combined_filename:
+        save_points_to_las(combined_points, combined_filename)
+    print("Write files time: ", time.time()-t0)
+
+    # Estimate normals
+    t1 = time.time()
+    combined_pcd.estimate_normals(
+        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=normal_radius, max_nn=normal_max_nn)
+    )
+    combined_pcd.orient_normals_consistent_tangent_plane(100)
+    print("Normal estimation time: ", time.time()-t1)
+
+    # Apply Ball Pivoting Algorithm
+    t2 = time.time()
+    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+        combined_pcd, o3d.utility.DoubleVector(ball_pivoting_radii)
+    )
+    print("Draw mesh time: ", time.time()-t2)
+
+    mesh = map_colors_to_mesh(pcd_downsampled, mesh, device=device)
+
+    # Save the mesh
+    o3d.io.write_triangle_mesh(output_file, mesh)
+
+    processing_time = time.time() - start_time
+    print(f"Processing time: {processing_time:.2f} seconds")
+
+    return mesh, edge_pcd, inside_pcd, combined_pcd
+
