@@ -9,6 +9,10 @@ This repository contains code for point cloud processing using Open3D, CuPy, and
 - Windows 10 or later
 - Windows Subsystem for Linux (WSL)
 - Python version should not exceed 3.11
+- Open3D version: 0.17.0
+- NumPy version: 1.24.1
+- CuPy version: 12.3.0
+- PyTorch version: 1.7.1
 
 ## Installation Guide
 
